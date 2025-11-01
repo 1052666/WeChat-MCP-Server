@@ -2,9 +2,9 @@
 
 <div align="center">
 
-![GitHub stars](https://img.shields.io/github/stars/linxiajin08/WeChat-MCP-Server?style=social)
-![GitHub forks](https://img.shields.io/github/forks/linxiajin08/WeChat-MCP-Server?style=social)
-![GitHub license](https://img.shields.io/github/license/linxiajin08/WeChat-MCP-Server)
+![GitHub stars](https://img.shields.io/github/stars/1052666/WeChat-MCP-Server?style=social)
+![GitHub forks](https://img.shields.io/github/forks/1052666/WeChat-MCP-Server?style=social)
+![GitHub license](https://img.shields.io/github/license/1052666/WeChat-MCP-Server)
 ![Python version](https://img.shields.io/badge/python-3.8%2B-blue)
 
 **一个符合 Model Context Protocol (MCP) 标准的微信消息发送服务器，专为AI助手设计**
@@ -76,7 +76,7 @@ WeChat-MCP-Server/
 
 ```bash
 # 克隆项目
-git clone https://github.com/linxiajin08/WeChat-MCP-Server.git
+git clone https://github.com/1052666/WeChat-MCP-Server.git
 cd WeChat-MCP-Server
 
 # 安装依赖
@@ -457,11 +457,11 @@ MIT许可证允许：
 我们欢迎所有形式的贡献！
 
 ### 🐛 报告问题
-- 使用 [Issues](https://github.com/linxiajin08/WeChat-MCP-Server/issues) 报告bug
+- 使用 [Issues](https://github.com/1052666/WeChat-MCP-Server/issues) 报告bug
 - 提供详细的错误信息和复现步骤
 
 ### 💡 功能建议
-- 在 [Issues](https://github.com/linxiajin08/WeChat-MCP-Server/issues) 中提出新功能建议
+- 在 [Issues](https://github.com/1052666/WeChat-MCP-Server/issues) 中提出新功能建议
 - 详细描述功能需求和使用场景
 
 ### 🔧 代码贡献
@@ -479,7 +479,7 @@ MIT许可证允许：
 
 <div align="center">
 
-[![Star History Chart](https://api.star-history.com/svg?repos=linxiajin08/WeChat-MCP-Server&type=Date)](https://star-history.com/#linxiajin08/WeChat-MCP-Server&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=1052666/WeChat-MCP-Server&type=Date)](https://star-history.com/#1052666/WeChat-MCP-Server&Date)
 
 </div>
 
@@ -487,17 +487,17 @@ MIT许可证允许：
 
 <div align="center">
 
-![GitHub stars](https://img.shields.io/github/stars/linxiajin08/WeChat-MCP-Server?style=social)
-![GitHub forks](https://img.shields.io/github/forks/linxiajin08/WeChat-MCP-Server?style=social)
-![GitHub watchers](https://img.shields.io/github/watchers/linxiajin08/WeChat-MCP-Server?style=social)
+![GitHub stars](https://img.shields.io/github/stars/1052666/WeChat-MCP-Server?style=social)
+![GitHub forks](https://img.shields.io/github/forks/1052666/WeChat-MCP-Server?style=social)
+![GitHub watchers](https://img.shields.io/github/watchers/1052666/WeChat-MCP-Server?style=social)
 
-![GitHub issues](https://img.shields.io/github/issues/linxiajin08/WeChat-MCP-Server)
-![GitHub pull requests](https://img.shields.io/github/issues-pr/linxiajin08/WeChat-MCP-Server)
-![GitHub last commit](https://img.shields.io/github/last-commit/linxiajin08/WeChat-MCP-Server)
+![GitHub issues](https://img.shields.io/github/issues/1052666/WeChat-MCP-Server)
+![GitHub pull requests](https://img.shields.io/github/issues-pr/1052666/WeChat-MCP-Server)
+![GitHub last commit](https://img.shields.io/github/last-commit/1052666/WeChat-MCP-Server)
 
-![GitHub repo size](https://img.shields.io/github/repo-size/linxiajin08/WeChat-MCP-Server)
-![GitHub code size](https://img.shields.io/github/languages/code-size/linxiajin08/WeChat-MCP-Server)
-![GitHub top language](https://img.shields.io/github/languages/top/linxiajin08/WeChat-MCP-Server)
+![GitHub repo size](https://img.shields.io/github/repo-size/1052666/WeChat-MCP-Server)
+![GitHub code size](https://img.shields.io/github/languages/code-size/1052666/WeChat-MCP-Server)
+![GitHub top language](https://img.shields.io/github/languages/top/1052666/WeChat-MCP-Server)
 
 </div>
 
