@@ -4,6 +4,7 @@
       "command": "python",
       "args": ["src/mcp_server.py"],
       "env": {},
+      "cwd": "",
       "description": "WeChat messaging server for sending text messages through WeChat automation"
     }
   },
@@ -13,52 +14,5 @@
     "description": "A Model Context Protocol server for WeChat messaging automation",
     "author": "WeChat MCP Team",
     "license": "MIT"
-  },
-  "capabilities": {
-    "tools": {
-      "send_wechat_message": {
-        "description": "Send a text message to a WeChat contact or group",
-        "parameters": {
-          "contact_name": "string",
-          "message": "string"
-        }
-      },
-      "schedule_wechat_message": {
-        "description": "Schedule a WeChat message to be sent after a delay",
-        "parameters": {
-          "contact_name": "string", 
-          "message": "string",
-          "delay_seconds": "number"
-        }
-      }
-    }
-  },
-  "requirements": {
-    "python": ">=3.7",
-    "packages": [
-      "pyautogui>=0.9.53",
-      "pywin32>=306"
-    ]
-  },
-  "usage": {
-    "examples": [
-      {
-        "description": "Send a simple message",
-        "tool": "send_wechat_message",
-        "arguments": {
-          "contact_name": "文件传输助手",
-          "message": "Hello from AI assistant!"
-        }
-      },
-      {
-        "description": "Schedule a delayed message",
-        "tool": "schedule_wechat_message", 
-        "arguments": {
-          "contact_name": "文件传输助手",
-          "message": "This message was scheduled!",
-          "delay_seconds": 10
-        }
-      }
-    ]
   }
 }

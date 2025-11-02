@@ -9,6 +9,10 @@ import json
 import sys
 from typing import Any, Dict, List, Optional, Union
 import logging
+import io
+
+# 设置标准输出编码为UTF-8
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 # MCP 协议类型
 class JSONRPCRequest:
@@ -52,7 +56,7 @@ class MCPServer:
     def _setup_logging(self):
         """设置日志配置。"""
         logging.basicConfig(
-            level=logging.INFO,
+            level=logging.DEBUG,
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )
         self.logger = logging.getLogger(self.name)
@@ -125,10 +129,10 @@ class MCPServer:
                 return JSONRPCResponse(error=error, id=request_id).to_dict()
                 
         except Exception as e:
-            self.logger.error(f"处理请求时出错: {e}")
+            self.logger.error(f"Error handling request: {e}")
             error = {
                 "code": -32603,
-                "message": f"内部错误: {str(e)}"
+                "message": f"Internal error: {str(e)}"
             }
             return JSONRPCResponse(error=error, id=request_data.get("id")).to_dict()
     
@@ -145,7 +149,7 @@ class MCPServer:
             }
         }
         
-        self.logger.info("服务器初始化成功")
+        self.logger.info("Server initialized successfully")
         return JSONRPCResponse(result=result, id=request_id).to_dict()
     
     async def _handle_tools_list(self, request_id: Optional[Union[str, int]]) -> Dict[str, Any]:
@@ -153,7 +157,7 @@ class MCPServer:
         if not self.initialized:
             error = {
                 "code": -32002,
-                "message": "服务器未初始化"
+                "message": "Server not initialized"
             }
             return JSONRPCResponse(error=error, id=request_id).to_dict()
         
@@ -165,7 +169,7 @@ class MCPServer:
         if not self.initialized:
             error = {
                 "code": -32002,
-                "message": "服务器未初始化"
+                "message": "Server not initialized"
             }
             return JSONRPCResponse(error=error, id=request_id).to_dict()
         
@@ -178,8 +182,8 @@ class MCPServer:
             return await self._execute_schedule_message(arguments, request_id)
         else:
             error = {
-                "code": -32602,
-                "message": f"未知工具: {tool_name}"
+                "code": -32601,
+                "message": f"Unknown tool: {tool_name}"
             }
             return JSONRPCResponse(error=error, id=request_id).to_dict()
     
@@ -192,12 +196,12 @@ class MCPServer:
             if not contact_name or not message:
                 error = {
                     "code": -32602,
-                    "message": "缺少必需参数: contact_name 和 message"
+                    "message": "Missing required parameters: contact_name and message"
                 }
                 return JSONRPCResponse(error=error, id=request_id).to_dict()
             
             # 导入并使用微信功能
-            from .wechat_controller import WeChatController
+            from wechat_controller import WeChatController
             
             controller = WeChatController()
             success = await controller.send_text_message(contact_name, message)
@@ -207,7 +211,7 @@ class MCPServer:
                     "content": [
                         {
                             "type": "text",
-                            "text": f"成功发送消息给 {contact_name}: {message}"
+                            "text": "Message sent successfully"
                         }
                     ]
                 }
@@ -216,7 +220,7 @@ class MCPServer:
                     "content": [
                         {
                             "type": "text", 
-                            "text": f"发送消息给 {contact_name} 失败"
+                            "text": "Failed to send message"
                         }
                     ]
                 }
@@ -224,10 +228,10 @@ class MCPServer:
             return JSONRPCResponse(result=result, id=request_id).to_dict()
             
         except Exception as e:
-            self.logger.error(f"执行 send_message 时出错: {e}")
+            self.logger.error(f"Error executing send_message: {e}")
             error = {
                 "code": -32603,
-                "message": f"工具执行错误: {str(e)}"
+                "message": f"Tool execution error: {str(e)}"
             }
             return JSONRPCResponse(error=error, id=request_id).to_dict()
     
@@ -238,15 +242,15 @@ class MCPServer:
             message = arguments.get("message")
             delay_seconds = arguments.get("delay_seconds")
             
-            if not all([contact_name, message, delay_seconds is not None]):
+            if not contact_name or not message or delay_seconds is None:
                 error = {
                     "code": -32602,
-                    "message": "缺少必需参数: contact_name、message 和 delay_seconds"
+                    "message": "Missing required parameters: contact_name, message and delay_seconds"
                 }
                 return JSONRPCResponse(error=error, id=request_id).to_dict()
             
             # 导入并使用微信功能
-            from .wechat_controller import WeChatController
+            from wechat_controller import WeChatController
             
             controller = WeChatController()
             success = await controller.schedule_message(contact_name, message, delay_seconds)
@@ -256,7 +260,7 @@ class MCPServer:
                     "content": [
                         {
                             "type": "text",
-                            "text": f"成功安排在 {delay_seconds} 秒后发送消息给 {contact_name}: {message}"
+                            "text": f"Message scheduled to be sent in {delay_seconds} seconds"
                         }
                     ]
                 }
@@ -265,7 +269,7 @@ class MCPServer:
                     "content": [
                         {
                             "type": "text",
-                            "text": f"安排发送消息给 {contact_name} 失败"
+                            "text": "Failed to schedule message"
                         }
                     ]
                 }
@@ -273,10 +277,10 @@ class MCPServer:
             return JSONRPCResponse(result=result, id=request_id).to_dict()
             
         except Exception as e:
-            self.logger.error(f"执行 schedule_message 时出错: {e}")
+            self.logger.error(f"Error executing schedule_message: {e}")
             error = {
                 "code": -32603,
-                "message": f"工具执行错误: {str(e)}"
+                "message": f"Tool execution error: {str(e)}"
             }
             return JSONRPCResponse(error=error, id=request_id).to_dict()
 
@@ -294,14 +298,14 @@ async def main():
             request_data = json.loads(line.strip())
             response = await server.handle_request(request_data)
             
-            print(json.dumps(response))
+            print(json.dumps(response, ensure_ascii=False, separators=(',', ':')))
             sys.stdout.flush()
             
         except json.JSONDecodeError as e:
             error_response = JSONRPCResponse(
                 error={"code": -32700, "message": f"解析错误: {str(e)}"}
             ).to_dict()
-            print(json.dumps(error_response))
+            print(json.dumps(error_response, ensure_ascii=False, separators=(',', ':')))
             sys.stdout.flush()
         except Exception as e:
             server.logger.error(f"意外错误: {e}")
