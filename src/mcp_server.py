@@ -204,8 +204,10 @@ class MCPServer:
             from wechat_controller import WeChatController
             
             controller = WeChatController()
-            success = await controller.send_text_message(contact_name, message)
-            
+            send_result = await controller.send_text_message(contact_name, message)
+
+            success = send_result if isinstance(send_result, bool) else bool(send_result.get("ok"))
+
             if success:
                 result = {
                     "content": [
@@ -216,11 +218,19 @@ class MCPServer:
                     ]
                 }
             else:
+                if isinstance(send_result, dict):
+                    stage = send_result.get("stage")
+                    reason = send_result.get("reason")
+                    version = send_result.get("wechat_version")
+                    is_nt = send_result.get("is_nt_framework")
+                    extra = f" (stage={stage}, reason={reason}, wechat_version={version}, nt={is_nt})"
+                else:
+                    extra = ""
                 result = {
                     "content": [
                         {
                             "type": "text", 
-                            "text": "Failed to send message"
+                            "text": f"Failed to send message{extra}"
                         }
                     ]
                 }

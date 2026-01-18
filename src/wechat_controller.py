@@ -2,451 +2,330 @@
 """
 微信控制器
 处理微信自动化发送消息功能。
-支持NT框架（WeChat 4.0及以上版本）。
+仅支持 NT 架构（WeChat 4.0+）；低于 4.0 的版本直接跳过。
 """
 
 import asyncio
-import time
-import threading
+import io
 import logging
-import re
-from typing import Optional, Tuple, Dict, List
-import pyautogui
-import win32gui
-import win32con
-import win32api
-import win32process
-import win32clipboard
-import psutil
+import sys
+import time
+from typing import Any, Dict, Optional
 
+import psutil
+import pyautogui
+import win32api
+import win32con
+import win32gui
+import win32clipboard
 
 class WeChatController:
-    """微信自动化操作控制器，支持NT框架。"""
+    """微信自动化操作控制器（仅 NT 版本）。"""
     
     def __init__(self):
         # 设置日志级别为DEBUG
         logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.DEBUG)
-        # 配置 pyautogui
+
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+
         pyautogui.FAILSAFE = True
-        pyautogui.PAUSE = 0.3  # 减少延迟以提高性能
-        self.logger.debug("WeChatController initialized with DEBUG logging")
-        
-        # NT框架相关配置
-        self.nt_framework_support = True
-        self.wechat_version = None
-        self.is_nt_version = False
-    
+        pyautogui.PAUSE = 0.3
+
+        self.wechat_version: Optional[str] = None
+        self.is_nt_version: bool = False
+        self._last_window_kind: Optional[str] = None
+        self._detect_wechat_version()
+
     def _detect_wechat_version(self) -> Optional[str]:
-        """检测微信版本信息。"""
         try:
-            for proc in psutil.process_iter(['pid', 'name', 'exe']):
-                if proc.info['name'] and 'wechat' in proc.info['name'].lower():
-                    if proc.info['exe']:
-                        try:
-                            # 获取文件版本信息
-                            version_info = win32api.GetFileVersionInfo(proc.info['exe'], "\\")
-                            version = f"{version_info['FileVersionMS'] >> 16}.{version_info['FileVersionMS'] & 0xFFFF}.{version_info['FileVersionLS'] >> 16}.{version_info['FileVersionLS'] & 0xFFFF}"
-                            self.wechat_version = version
-                            
-                            # 检查是否为NT框架版本（4.0及以上）
-                            major_version = int(version.split('.')[0])
-                            if major_version >= 4:
-                                self.is_nt_version = True
-                                self.logger.info(f"Detected WeChat NT framework version: {version}")
-                            else:
-                                self.is_nt_version = False
-                                self.logger.info(f"Detected WeChat legacy version: {version}")
-                            
-                            return version
-                        except Exception as e:
-                            self.logger.warning(f"Could not get version info for {proc.info['exe']}: {e}")
-            
-            self.logger.warning("Could not detect WeChat version")
+            window_hwnd = self._find_wechat_window()
+            window_is_nt = self._last_window_kind == "nt" and window_hwnd is not None
+
+            for proc in psutil.process_iter(['name', 'exe']):
+                name = proc.info.get('name') or ""
+                if 'wechat' not in name.lower():
+                    continue
+
+                exe = proc.info.get('exe')
+                if not exe:
+                    continue
+
+                version_info = win32api.GetFileVersionInfo(exe, "\\")
+                version = f"{version_info['FileVersionMS'] >> 16}.{version_info['FileVersionMS'] & 0xFFFF}.{version_info['FileVersionLS'] >> 16}.{version_info['FileVersionLS'] & 0xFFFF}"
+                self.wechat_version = version
+
+                try:
+                    major_version = int(version.split('.')[0])
+                except Exception:
+                    major_version = 0
+
+                self.is_nt_version = window_is_nt or major_version >= 4
+                if self.is_nt_version and major_version >= 4:
+                    self.logger.info(f"Detected WeChat NT framework version: {version}")
+                elif self.is_nt_version and window_is_nt:
+                    self.logger.info(f"Detected WeChat NT framework window (file version: {version})")
+                else:
+                    self.logger.info(f"Detected WeChat legacy version (<4.0): {version} (will be skipped)")
+                return version
+
+            self.logger.warning("Could not detect WeChat process/version")
+            self.wechat_version = None
+            self.is_nt_version = window_is_nt
             return None
         except Exception as e:
             self.logger.error(f"Error detecting WeChat version: {e}")
+            self.wechat_version = None
+            self.is_nt_version = False
             return None
-    
+
     def _find_wechat_window(self) -> Optional[int]:
-        """查找微信主窗口句柄，支持NT框架。"""
-        def enum_windows_callback(hwnd, windows):
-            if win32gui.IsWindowVisible(hwnd):
-                window_text = win32gui.GetWindowText(hwnd)
-                class_name = win32gui.GetClassName(hwnd)
-                
-                # NT框架窗口类名检测
-                nt_class_patterns = [
-                    r"Qt\d+QWindowIcon",  # QT框架窗口
-                    r"WeChatMainWndForPC",  # 微信主窗口
-                    r"ChatWnd",  # 聊天窗口
-                ]
-                
-                # 传统窗口检测
-                legacy_patterns = ["微信", "WeChat"]
-                
-                # 检查NT框架窗口
-                for pattern in nt_class_patterns:
-                    if re.match(pattern, class_name):
-                        windows.append((hwnd, "nt", class_name))
-                        return True
-                
-                # 检查传统窗口
-                for pattern in legacy_patterns:
-                    if pattern in window_text:
-                        windows.append((hwnd, "legacy", window_text))
-                        return True
-            
+        import re
+
+        nt_windows = []
+        legacy_windows = []
+
+        def enum_windows_callback(hwnd, _):
+            if not win32gui.IsWindowVisible(hwnd):
+                return True
+            class_name = win32gui.GetClassName(hwnd)
+            window_text = win32gui.GetWindowText(hwnd)
+
+            nt_class_patterns = [
+                r"Qt\d+QWindowIcon",
+                r"WeChatMainWndForPC",
+                r"ChatWnd",
+            ]
+            for pattern in nt_class_patterns:
+                if re.match(pattern, class_name):
+                    nt_windows.append(hwnd)
+                    return True
+
+            if "微信" in window_text or "WeChat" in window_text:
+                legacy_windows.append(hwnd)
             return True
-        
-        windows = []
-        win32gui.EnumWindows(enum_windows_callback, windows)
-        
-        if windows:
-            # 优先选择NT框架窗口
-            nt_windows = [w for w in windows if w[1] == "nt"]
-            if nt_windows:
-                hwnd = nt_windows[0][0]
-                self.logger.info(f"Found WeChat NT framework window: {hwnd} (class: {nt_windows[0][2]})")
-                return hwnd
-            else:
-                hwnd = windows[0][0]
-                self.logger.info(f"Found WeChat legacy window: {hwnd} (text: {windows[0][2]})")
-                return hwnd
-        else:
-            self.logger.error("WeChat window not found")
-            return None
-    
+
+        win32gui.EnumWindows(enum_windows_callback, None)
+        if nt_windows:
+            self._last_window_kind = "nt"
+            return nt_windows[0]
+        if legacy_windows:
+            self._last_window_kind = "legacy"
+            return legacy_windows[0]
+        self._last_window_kind = None
+        return None
+
     def _activate_window(self, hwnd: int) -> bool:
-        """激活窗口并将其置于前台。"""
         try:
-            # 如果窗口最小化则恢复
             win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-            # 置于前台
             win32gui.SetForegroundWindow(hwnd)
             time.sleep(0.5)
             return True
         except Exception as e:
             self.logger.error(f"Failed to activate window: {e}")
             return False
-    
+
     def _find_and_click_input_box(self) -> bool:
-        """智能定位并点击微信输入框。"""
         try:
-            self.logger.info("Attempting to locate and click input box")
-            
-            # 获取微信窗口信息
             hwnd = self._find_wechat_window()
             if not hwnd:
                 self.logger.error("WeChat window not found")
                 return False
-            
-            # 获取窗口位置和大小
+
             rect = win32gui.GetWindowRect(hwnd)
             window_left, window_top, window_right, window_bottom = rect
             window_width = window_right - window_left
-            window_height = window_bottom - window_top
-            
-            self.logger.info(f"WeChat window rect: {rect}")
-            
-            # 尝试多个可能的输入框位置
+
             input_positions = [
-                # 位置1: 窗口底部中央偏下
                 (window_left + window_width // 2, window_bottom - 80),
-                # 位置2: 窗口底部中央
                 (window_left + window_width // 2, window_bottom - 120),
-                # 位置3: 窗口底部左侧
                 (window_left + window_width // 3, window_bottom - 100),
-                # 位置4: 窗口底部右侧
                 (window_left + window_width * 2 // 3, window_bottom - 100),
-                # 位置5: 屏幕中下部（备选方案）
-                (pyautogui.size()[0] // 2, int(pyautogui.size()[1] * 0.85))
+                (pyautogui.size()[0] // 2, int(pyautogui.size()[1] * 0.85)),
             ]
-            
-            for i, (click_x, click_y) in enumerate(input_positions, 1):
+
+            for click_x, click_y in input_positions:
                 try:
-                    self.logger.info(f"Trying input position {i}: ({click_x}, {click_y})")
-                    pyautogui.click(click_x, click_y)
-                    time.sleep(0.5)
-                    
-                    # 测试是否成功获得焦点（尝试输入一个字符然后删除）
+                    pyautogui.click(int(click_x), int(click_y))
+                    time.sleep(0.4)
                     pyautogui.typewrite('a')
-                    time.sleep(0.2)
+                    time.sleep(0.1)
                     pyautogui.press('backspace')
-                    time.sleep(0.2)
-                    
-                    self.logger.info(f"Successfully clicked input box at position {i}")
+                    time.sleep(0.1)
                     return True
-                    
-                except Exception as e:
-                    self.logger.warning(f"Position {i} failed: {e}")
+                except Exception:
                     continue
-            
+
             self.logger.error("All input box positions failed")
             return False
-            
         except Exception as e:
-            self.logger.error(f"Failed to find and click input box: {e}")
+            self.logger.error(f"Failed to locate input box: {e}")
             return False
-    
-    def _input_text_via_keyboard(self, text: str) -> bool:
-        """通过剪贴板输入文本，确保中文字符正确处理。"""
+
+    def _paste_text_via_clipboard(self, text: str) -> Optional[str]:
+        original_data: Optional[str] = None
+        win32clipboard.OpenClipboard()
         try:
-            import win32clipboard
-            
-            # 保存当前剪贴板内容
-            win32clipboard.OpenClipboard()
             try:
-                original_data = win32clipboard.GetClipboardData()
-            except:
+                data = win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT)
+                if isinstance(data, str):
+                    original_data = data
+            except Exception:
                 original_data = None
+        finally:
             win32clipboard.CloseClipboard()
-            
-            # 清空输入框
-            pyautogui.hotkey('ctrl', 'a')
-            time.sleep(0.1)
-            pyautogui.press('delete')
-            time.sleep(0.2)
-            
-            # 设置剪贴板内容为UTF-8编码的文本
-            win32clipboard.OpenClipboard()
+
+        pyautogui.hotkey('ctrl', 'a')
+        time.sleep(0.12)
+        pyautogui.press('delete')
+        time.sleep(0.25)
+
+        win32clipboard.OpenClipboard()
+        try:
             win32clipboard.EmptyClipboard()
             win32clipboard.SetClipboardText(text, win32clipboard.CF_UNICODETEXT)
+        finally:
             win32clipboard.CloseClipboard()
-            time.sleep(0.1)
-            
-            # 粘贴文本
-            pyautogui.hotkey('ctrl', 'v')
-            time.sleep(0.5)
-            
-            # 恢复原始剪贴板内容
-            if original_data is not None:
-                win32clipboard.OpenClipboard()
+
+        time.sleep(0.25)
+        pyautogui.hotkey('ctrl', 'v')
+        time.sleep(0.6)
+        return original_data
+
+    def _restore_clipboard(self, original_data: Optional[str]) -> None:
+        if not original_data:
+            return
+        try:
+            win32clipboard.OpenClipboard()
+            try:
                 win32clipboard.EmptyClipboard()
-                win32clipboard.SetClipboardText(original_data)
+                win32clipboard.SetClipboardText(original_data, win32clipboard.CF_UNICODETEXT)
+            finally:
                 win32clipboard.CloseClipboard()
-            
-            self.logger.info(f"Successfully input text via clipboard: {text}")
+        except Exception:
+            return
+
+    def _input_text_via_clipboard(self, text: str) -> bool:
+        try:
+            original_data = self._paste_text_via_clipboard(text)
+            self._restore_clipboard(original_data)
             return True
-            
         except Exception as e:
             self.logger.error(f"Failed to input text via clipboard: {e}")
             return False
-    
+
     def _search_contact_nt(self, contact_name: str) -> bool:
-        """在NT框架微信中搜索联系人。"""
+        original_data: Optional[str] = None
         try:
-            self.logger.debug(f"开始搜索联系人: {contact_name}")
-            
-            # 方法1: 使用全局搜索 (Ctrl+F)
             pyautogui.hotkey('ctrl', 'f')
-            time.sleep(1.0)  # 增加等待时间确保搜索框完全打开
-            
-            # 清空搜索框
+            time.sleep(1.0)
             pyautogui.hotkey('ctrl', 'a')
-            time.sleep(0.3)
+            time.sleep(0.2)
             pyautogui.press('delete')
-            time.sleep(0.3)
-            
-            # 输入联系人姓名
-            self.logger.debug(f"输入联系人名称: {contact_name}")
-            if not self._input_text_via_keyboard(contact_name):
-                self.logger.error("输入联系人名称失败")
-                return False
-                
-            # 按下回车键直接搜索
-            self.logger.debug("按下回车键执行搜索")
+            time.sleep(0.2)
+
+            original_data = self._paste_text_via_clipboard(contact_name)
+
             pyautogui.press('enter')
-            time.sleep(2.0)  # 增加等待时间确保搜索完成
-            
-            # 检查是否有搜索结果并选择第一个
-            self.logger.debug("选择第一个搜索结果")
-            pyautogui.press('down')
-            time.sleep(0.5)
+            time.sleep(1.0)
+
             pyautogui.press('enter')
-            time.sleep(1.5)  # 增加等待时间确保聊天窗口打开
-            
-            self.logger.debug(f"成功找到并选择联系人: {contact_name}")
+            time.sleep(1.2)
             return True
         except Exception as e:
-            self.logger.error(f"Failed to search contact in NT framework: {e}")
+            self.logger.error(f"Failed to search contact in NT: {e}")
             return False
-    
-    def _search_contact_legacy(self, contact_name: str) -> bool:
-        """在传统微信中搜索联系人。"""
-        try:
-            # 使用 Ctrl+F 打开搜索
-            pyautogui.hotkey('ctrl', 'f')
-            time.sleep(0.5)
-            
-            # 清空搜索框并输入联系人姓名
-            if not self._input_text_via_keyboard(contact_name):
-                return False
-            time.sleep(1)
-            
-            # 按回车键搜索
-            pyautogui.press('enter')
-            time.sleep(1)
-            
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to search contact in legacy version: {e}")
-            return False
-    
-    def _search_contact(self, contact_name: str) -> bool:
-        """在微信中搜索联系人，自动适配NT框架和传统版本。"""
-        if self.is_nt_version:
-            return self._search_contact_nt(contact_name)
-        else:
-            return self._search_contact_legacy(contact_name)
-    
+        finally:
+            self._restore_clipboard(original_data)
+
     def _send_text_nt(self, message: str) -> bool:
-        """在NT框架微信中发送文本消息。"""
         try:
-            self.logger.info("Starting NT framework message send process")
-            
-            # 使用智能输入框定位
             if not self._find_and_click_input_box():
-                self.logger.error("Failed to locate input box")
-                return False
-            
-            # 使用键盘输入消息
-            if not self._input_text_via_keyboard(message):
-                self.logger.error("Failed to input message via keyboard")
-                return False
-            
-            # 尝试多种发送方式
-            send_success = False
-            
-            # 方式1: Enter键发送
+                try:
+                    pyautogui.press('esc')
+                    time.sleep(0.15)
+                except Exception:
+                    pass
+                if not self._find_and_click_input_box():
+                    return False
+
+            original_data = self._paste_text_via_clipboard(message)
+
             try:
                 pyautogui.press('enter')
-                time.sleep(0.8)
-                self.logger.info("Attempted send with Enter key")
-                send_success = True
-            except Exception as e:
-                self.logger.warning(f"Enter key send failed: {e}")
-            
-            # 方式2: 如果Enter失败，尝试Ctrl+Enter
-            if not send_success:
+                time.sleep(0.6)
+                self._restore_clipboard(original_data)
+                return True
+            except Exception:
                 try:
                     pyautogui.hotkey('ctrl', 'enter')
-                    time.sleep(0.8)
-                    self.logger.info("Attempted send with Ctrl+Enter")
-                    send_success = True
-                except Exception as e:
-                    self.logger.warning(f"Ctrl+Enter send failed: {e}")
-            
-            # 方式3: 如果还是失败，尝试Alt+S（某些版本的发送快捷键）
-            if not send_success:
-                try:
-                    pyautogui.hotkey('alt', 's')
-                    time.sleep(0.8)
-                    self.logger.info("Attempted send with Alt+S")
-                    send_success = True
-                except Exception as e:
-                    self.logger.warning(f"Alt+S send failed: {e}")
-            
-            if send_success:
-                self.logger.info("Message sent successfully using NT framework")
-                return True
-            else:
-                self.logger.error("All send methods failed in NT framework")
-                return False
-                
+                    time.sleep(0.6)
+                    self._restore_clipboard(original_data)
+                    return True
+                except Exception:
+                    try:
+                        pyautogui.hotkey('alt', 's')
+                        time.sleep(0.6)
+                        self._restore_clipboard(original_data)
+                        return True
+                    except Exception:
+                        return False
         except Exception as e:
-            self.logger.error(f"Failed to send text in NT framework: {e}")
+            self.logger.error(f"Failed to send text in NT: {e}")
             return False
     
-    def _send_text_legacy(self, message: str) -> bool:
-        """在传统微信中发送文本消息。"""
+    async def send_text_message(self, contact_name: str, message: str) -> Dict[str, Any]:
+        """向指定联系人发送文本消息。"""
+        result: Dict[str, Any] = {
+            "ok": False,
+            "contact_name": contact_name,
+            "wechat_version": None,
+            "is_nt_framework": False,
+            "stage": None,
+            "reason": None,
+            "retry_used": None,
+        }
         try:
-            self.logger.info("Starting legacy framework message send process")
-            
-            # 使用智能输入框定位
-            if not self._find_and_click_input_box():
-                self.logger.error("Failed to locate input box")
-                return False
-            
-            # 使用键盘输入消息
-            if not self._input_text_via_keyboard(message):
-                self.logger.error("Failed to input message via keyboard")
-                return False
-            
-            # 尝试多种发送方式
-            send_success = False
-            
-            # 方式1: Enter键发送
-            try:
-                pyautogui.press('enter')
-                time.sleep(0.8)
-                self.logger.info("Attempted send with Enter key")
-                send_success = True
-            except Exception as e:
-                self.logger.warning(f"Enter key send failed: {e}")
-            
-            # 方式2: 如果Enter失败，尝试Ctrl+Enter
-            if not send_success:
-                try:
-                    pyautogui.hotkey('ctrl', 'enter')
-                    time.sleep(0.8)
-                    self.logger.info("Attempted send with Ctrl+Enter")
-                    send_success = True
-                except Exception as e:
-                    self.logger.warning(f"Ctrl+Enter send failed: {e}")
-            
-            if send_success:
-                self.logger.info("Message sent successfully using legacy framework")
-                return True
-            else:
-                self.logger.error("All send methods failed in legacy framework")
-                return False
-                
-        except Exception as e:
-            self.logger.error(f"Failed to send text in legacy version: {e}")
-            return False
-    
-    def _send_text(self, message: str) -> bool:
-        """在当前聊天中发送文本消息，自动适配NT框架和传统版本。"""
-        if self.is_nt_version:
-            return self._send_text_nt(message)
-        else:
-            return self._send_text_legacy(message)
-    
-    async def send_text_message(self, contact_name: str, message: str) -> bool:
-        """向指定联系人发送文本消息，支持NT框架。"""
-        try:
-            self.logger.info(f"Sending message to {contact_name}: {message}")
-            
-            # 检测微信版本
             version = self._detect_wechat_version()
-            if version:
-                self.logger.info(f"WeChat version detected: {version} (NT framework: {self.is_nt_version})")
-            
-            # 查找并激活微信窗口
-            wechat_hwnd = self._find_wechat_window()
-            if not wechat_hwnd:
-                return False
-            
-            if not self._activate_window(wechat_hwnd):
-                return False
-            
-            # 搜索联系人
-            if not self._search_contact(contact_name):
-                return False
-            
-            # 发送消息
-            if not self._send_text(message):
-                return False
-            
-            framework_type = "NT framework" if self.is_nt_version else "legacy"
-            self.logger.info(f"Successfully sent message to {contact_name} using {framework_type}")
-            return True
-            
+            result["wechat_version"] = version
+            result["is_nt_framework"] = self.is_nt_version
+
+            if not self.is_nt_version:
+                result["stage"] = "version_check"
+                result["reason"] = "non_nt_version_skipped"
+                return result
+
+            hwnd = self._find_wechat_window()
+            if not hwnd:
+                result["stage"] = "find_window"
+                result["reason"] = "wechat_window_not_found"
+                return result
+
+            if not self._activate_window(hwnd):
+                result["stage"] = "activate_window"
+                result["reason"] = "failed_to_activate_window"
+                return result
+            if not self._search_contact_nt(contact_name):
+                result["stage"] = "search_contact"
+                result["reason"] = "search_failed"
+                return result
+
+            if self._send_text_nt(message):
+                result["ok"] = True
+                result["stage"] = "send_text"
+                result["reason"] = None
+                return result
+
+            result["stage"] = "send_text"
+            result["reason"] = "send_failed"
+            return result
+
         except Exception as e:
             self.logger.error(f"Error sending message: {e}")
-            return False
+            result["stage"] = result["stage"] or "exception"
+            result["reason"] = str(e)
+            return result
     
     async def schedule_message(self, contact_name: str, message: str, delay_seconds: float) -> bool:
         """安排在延迟后发送消息。"""
@@ -457,8 +336,7 @@ class WeChatController:
                 await asyncio.sleep(delay_seconds)
                 # 调用异步函数
                 try:
-                    result = await self.send_text_message(contact_name, message)
-                    self.logger.info(f"Scheduled message sent successfully: {result}")
+                    await self.send_text_message(contact_name, message)
                 except Exception as e:
                     self.logger.error(f"Error in delayed send: {e}")
             
@@ -471,17 +349,22 @@ class WeChatController:
             self.logger.error(f"Error scheduling message: {e}")
             return False
     
-    def get_status(self) -> dict:
-        """获取微信控制器的当前状态，包含NT框架信息。"""
-        # 检测版本信息
-        version = self._detect_wechat_version()
-        wechat_hwnd = self._find_wechat_window()
-        
-        return {
-            "wechat_available": wechat_hwnd is not None,
-            "window_handle": wechat_hwnd,
-            "wechat_version": self.wechat_version,
-            "is_nt_framework": self.is_nt_version,
-            "nt_framework_support": self.nt_framework_support,
-            "framework_type": "NT framework (4.0+)" if self.is_nt_version else "Legacy (<4.0)"
-        }
+    def get_status(self) -> Dict[str, Any]:
+        """获取微信控制器的当前状态。"""
+        try:
+            version = self._detect_wechat_version()
+            hwnd = self._find_wechat_window()
+            return {
+                "wechat_available": hwnd is not None,
+                "window_handle": hwnd,
+                "wechat_version": version,
+                "is_nt_framework": self.is_nt_version,
+                "supported": self.is_nt_version,
+                "framework_type": "NT framework (4.0+)" if self.is_nt_version else "Legacy (<4.0, skipped)"
+            }
+        except Exception as e:
+            self.logger.error(f"Error checking status: {e}")
+            return {
+                "wechat_available": False,
+                "error": str(e)
+            }
