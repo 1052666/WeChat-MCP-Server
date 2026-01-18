@@ -92,15 +92,21 @@ class WeChatController:
             class_name = win32gui.GetClassName(hwnd)
             window_text = win32gui.GetWindowText(hwnd)
 
+            # 优先匹配主窗口类名
+            if class_name == "WeChatMainWndForPC":
+                nt_windows.insert(0, hwnd) # 插入到最前面
+                return True
+            
             nt_class_patterns = [
-                r"Qt\d+QWindowIcon",
-                r"WeChatMainWndForPC",
                 r"ChatWnd",
+                r"Qt\d+QWindowIcon",
             ]
             for pattern in nt_class_patterns:
                 if re.match(pattern, class_name):
-                    nt_windows.append(hwnd)
-                    return True
+                    # 只有标题包含 WeChat 或 微信 才认为是有效窗口，防止误匹配其他 Qt 应用
+                    if "WeChat" in window_text or "微信" in window_text:
+                        nt_windows.append(hwnd)
+                        return True
 
             if "微信" in window_text or "WeChat" in window_text:
                 legacy_windows.append(hwnd)
@@ -116,11 +122,73 @@ class WeChatController:
         self._last_window_kind = None
         return None
 
+    def _ensure_modifiers_released(self):
+        """确保所有修饰键都已释放"""
+        import ctypes
+        keys = [0x10, 0x11, 0x12] # Shift, Ctrl, Alt
+        for key in keys:
+            if ctypes.windll.user32.GetKeyState(key) & 0x8000:
+                ctypes.windll.user32.keybd_event(key, 0, 0x0002, 0) # Key up
+
     def _activate_window(self, hwnd: int) -> bool:
         try:
-            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-            win32gui.SetForegroundWindow(hwnd)
-            time.sleep(0.5)
+            self._ensure_modifiers_released()
+            
+            # 1. 强制恢复窗口（解决最小化问题）
+            if win32gui.IsIconic(hwnd):
+                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+            
+            # 2. 尝试标准置顶
+            try:
+                win32gui.SetForegroundWindow(hwnd)
+            except Exception:
+                pass  # 可能会因为 Windows 限制而失败
+
+            # 3. 检查是否已经置顶
+            if win32gui.GetForegroundWindow() == hwnd:
+                return True
+
+            # 4. 如果标准置顶失败，使用 AttachThreadInput 大法
+            # 这是官方推荐的绕过 Foreground Lock 的方法，比模拟按键更安全
+            try:
+                import win32process
+                import ctypes
+                from ctypes import windll
+                
+                foreground_hwnd = win32gui.GetForegroundWindow()
+                if foreground_hwnd != 0:
+                    foreground_thread_id = win32process.GetWindowThreadProcessId(foreground_hwnd)[0]
+                    current_thread_id = windll.kernel32.GetCurrentThreadId()
+                    
+                    if foreground_thread_id != current_thread_id:
+                        # 附加输入上下文
+                        windll.user32.AttachThreadInput(current_thread_id, foreground_thread_id, True)
+                        # 再次尝试置顶
+                        try:
+                            win32gui.SetForegroundWindow(hwnd)
+                            win32gui.SetFocus(hwnd)
+                        except Exception:
+                            pass
+                        # 解除附加
+                        windll.user32.AttachThreadInput(current_thread_id, foreground_thread_id, False)
+            except Exception as e:
+                self.logger.error(f"AttachThreadInput failed: {e}")
+
+            # 5. 等待并验证置顶结果
+            for _ in range(10): # 最多等待 1 秒
+                if win32gui.GetForegroundWindow() == hwnd:
+                    return True
+                time.sleep(0.1)
+                try:
+                    win32gui.SetForegroundWindow(hwnd)
+                except Exception:
+                    pass
+            
+            # 6. 最终检查：如果没有获得焦点，绝对不要继续
+            if win32gui.GetForegroundWindow() != hwnd:
+                self.logger.error("Failed to bring WeChat window to foreground. Operation aborted to prevent mis-clicks.")
+                return False
+                
             return True
         except Exception as e:
             self.logger.error(f"Failed to activate window: {e}")
@@ -216,6 +284,12 @@ class WeChatController:
             return False
 
     def _search_contact_nt(self, contact_name: str) -> bool:
+        # Double check focus before typing
+        hwnd = self._find_wechat_window()
+        if not hwnd or win32gui.GetForegroundWindow() != hwnd:
+             self.logger.error("WeChat not focused, aborting search")
+             return False
+
         original_data: Optional[str] = None
         try:
             pyautogui.hotkey('ctrl', 'f')
@@ -230,8 +304,6 @@ class WeChatController:
             pyautogui.press('enter')
             time.sleep(1.0)
 
-            pyautogui.press('enter')
-            time.sleep(1.2)
             return True
         except Exception as e:
             self.logger.error(f"Failed to search contact in NT: {e}")
@@ -242,11 +314,8 @@ class WeChatController:
     def _send_text_nt(self, message: str) -> bool:
         try:
             if not self._find_and_click_input_box():
-                try:
-                    pyautogui.press('esc')
-                    time.sleep(0.15)
-                except Exception:
-                    pass
+                # 尝试再次寻找
+                time.sleep(0.5)
                 if not self._find_and_click_input_box():
                     return False
 
@@ -255,19 +324,31 @@ class WeChatController:
             try:
                 pyautogui.press('enter')
                 time.sleep(0.6)
-                self._restore_clipboard(original_data)
+                # 尝试恢复剪贴板，但失败不影响发送结果
+                try:
+                    self._restore_clipboard(original_data)
+                except Exception:
+                    pass
                 return True
             except Exception:
                 try:
                     pyautogui.hotkey('ctrl', 'enter')
                     time.sleep(0.6)
-                    self._restore_clipboard(original_data)
+                    # 尝试恢复剪贴板，但失败不影响发送结果
+                    try:
+                        self._restore_clipboard(original_data)
+                    except Exception:
+                        pass
                     return True
                 except Exception:
                     try:
                         pyautogui.hotkey('alt', 's')
                         time.sleep(0.6)
-                        self._restore_clipboard(original_data)
+                        # 尝试恢复剪贴板，但失败不影响发送结果
+                        try:
+                            self._restore_clipboard(original_data)
+                        except Exception:
+                            pass
                         return True
                     except Exception:
                         return False

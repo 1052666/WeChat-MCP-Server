@@ -13,6 +13,7 @@ import io
 
 # 设置标准输出编码为UTF-8
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+sys.stdin = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8')
 
 # MCP 协议类型
 class JSONRPCRequest:
